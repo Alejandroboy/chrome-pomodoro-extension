@@ -1,0 +1,58 @@
+.widget {
+    position: fixed;
+    top: 30px;
+    left: 30px;
+    background: #fff;
+    padding: 20px;
+    z-index: 10000;
+}
+
+.container {
+    display: flex;
+}
+
+.half {
+    width: 50%;
+}
+
+.timer {
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    background: red;
+}
+
+
+.relative {
+    position: relative;
+}
+
+.modal {
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    padding: 20px;
+    background: #fff;
+    border: 1px solid #000;
+    border-radius: 10px;
+}
+
+.modal input {
+    margin: 10px 0;
+}
+
+.btn {
+    cursor: pointer;
+}
+
+#close {
+    position: absolute;
+    top: 30px;
+    right: 30px;
+    cursor: pointer;
+}
+
+#info {
+    margin-bottom: 10px;
+}

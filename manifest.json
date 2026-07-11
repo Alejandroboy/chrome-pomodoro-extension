@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Pomodoro Alejandro",
+  "version": "1.0.0",
+  "description": "Custom pomodoro timer for Alejandro",
+  "action": {},
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "css": ["styles.css"],
+      "js": ["content-script.js"]
+    }
+  ],
+  "host_permissions": ["<all_urls>"],
+  "web_accessible_resources": [
+    {
+      "resources": ["styles.css"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "permissions": ["notifications", "storage", "alarms", "scripting"],
+  "icons": {
+    "48": "images/icon-128.png",
+    "128": "images/icon-128.png"
+  }
+}
