@@ -10,6 +10,8 @@ const DEFAULT_TIMER = {
     status: 'idle',
     endsAt: null,
     remainingMs: null,
+    startedAt: null,
+    plannedMs: null,
     completedSessions: 0,
     sessionsToday: 0,
     day: null,
@@ -33,6 +35,8 @@ const START_LABEL = {
     idle: 'Запустить',
 };
 
+const HISTORY_VISIBLE = 50;
+
 const host = document.createElement('div');
 host.style.display = 'none';
 document.body.appendChild(host);
@@ -54,9 +58,13 @@ shadow.innerHTML = `
             </div>
         </div>
         <div class="half relative">
+            <p id="focusToday">В фокусе сегодня: 0 мин</p>
             <p id="sessionsToday">Сессий за день: 0</p>
             <p id="sessionsInBlock">Сессий в блоке: 0 / 4</p>
-            <button id="tune" class="btn">Настроить</button>
+            <div class="controls">
+                <button id="tune" class="btn">Настроить</button>
+                <button id="toggleHistory" class="btn">История</button>
+            </div>
 
             <div class="modal" id="modal">
                 <label for="workMinutes">
@@ -82,6 +90,14 @@ shadow.innerHTML = `
             </div>
         </div>
     </div>
+
+    <div class="history" id="history">
+        <div class="history-head">
+            <h3>История</h3>
+            <button id="clearHistory" class="btn btn-quiet">Очистить</button>
+        </div>
+        <ul class="history-list" id="historyList"></ul>
+    </div>
 </div>
 `;
 
@@ -96,8 +112,13 @@ const el = {
     cancel: shadow.querySelector('#cancel'),
     close: shadow.querySelector('#close'),
     modal: shadow.querySelector('#modal'),
+    focusToday: shadow.querySelector('#focusToday'),
     sessionsToday: shadow.querySelector('#sessionsToday'),
     sessionsInBlock: shadow.querySelector('#sessionsInBlock'),
+    toggleHistory: shadow.querySelector('#toggleHistory'),
+    clearHistory: shadow.querySelector('#clearHistory'),
+    history: shadow.querySelector('#history'),
+    historyList: shadow.querySelector('#historyList'),
 };
 
 const SETTING_KEYS = ['workMinutes', 'shortMinutes', 'longMinutes', 'sessionsPerBlock'];
@@ -110,6 +131,8 @@ const inputs = {
 
 let settings = { ...DEFAULT_SETTINGS };
 let timer = { ...DEFAULT_TIMER };
+let history = [];
+let historyOpen = false;
 let tickId = null;
 
 const phaseDurationMs = (phase) => {
@@ -119,19 +142,81 @@ const phaseDurationMs = (phase) => {
 
 const remainingMs = () => {
     if (timer.status === 'running') return Math.max(0, timer.endsAt - Date.now());
-    if (timer.status === 'paused') return Math.max(0, timer.remainingMs ?? 0);
+    if (timer.status === 'paused') return Math.max(0, timer.remainingMs || 0);
     return phaseDurationMs(timer.phase);
 };
 
-const format = (ms) => {
+const formatClock = (ms) => {
     const total = Math.ceil(ms / 1000);
     const mm = String(Math.floor(total / 60)).padStart(2, '0');
     const ss = String(total % 60).padStart(2, '0');
     return `${mm}:${ss}`;
 };
 
+const formatTime = (ts) => new Date(ts).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+});
+
+const minutesOf = (ms) => Math.round(ms / 60_000);
+
+const isSameDay = (ts, date) => new Date(ts).toDateString() === date.toDateString();
+
+// --- rendering ---
+
 const renderClock = () => {
-    el.timer.textContent = format(remainingMs());
+    el.timer.textContent = formatClock(remainingMs());
+};
+
+const renderHistory = () => {
+    el.history.style.display = historyOpen ? 'block' : 'none';
+    el.toggleHistory.textContent = historyOpen ? 'Скрыть историю' : 'История';
+    if (!historyOpen) return;
+
+    el.historyList.replaceChildren();
+
+    if (history.length === 0) {
+        const empty = document.createElement('li');
+        empty.className = 'history-empty';
+        empty.textContent = 'Пока пусто. Заверши первую сессию.';
+        el.historyList.append(empty);
+        return;
+    }
+
+    for (const entry of history.slice(0, HISTORY_VISIBLE)) {
+        const item = document.createElement('li');
+        item.className = 'history-item';
+        item.dataset.phase = entry.phase;
+
+        const time = document.createElement('span');
+        time.className = 'history-time';
+        time.textContent = `${formatTime(entry.startedAt)}–${formatTime(entry.endedAt)}`;
+
+        const label = document.createElement('span');
+        label.className = 'history-label';
+        label.textContent = PHASE_LABEL[entry.phase];
+
+        const duration = document.createElement('span');
+        duration.className = 'history-duration';
+        duration.textContent = entry.completed
+            ? `${minutesOf(entry.plannedMs)} мин`
+            : `${minutesOf(entry.actualMs)} из ${minutesOf(entry.plannedMs)} мин · прервано`;
+
+        item.append(time, label, duration);
+        el.historyList.append(item);
+    }
+};
+
+const renderStats = () => {
+    const now = new Date();
+    const focusedMs = history
+        .filter((entry) => entry.phase === 'work' && isSameDay(entry.endedAt, now))
+        .reduce((sum, entry) => sum + entry.actualMs, 0);
+
+    el.focusToday.textContent = `В фокусе сегодня: ${minutesOf(focusedMs)} мин`;
+    el.sessionsToday.textContent = `Сессий за день: ${timer.sessionsToday}`;
+    el.sessionsInBlock.textContent =
+        `Сессий в блоке: ${timer.completedSessions} / ${settings.sessionsPerBlock}`;
 };
 
 const render = () => {
@@ -139,9 +224,8 @@ const render = () => {
     el.phase.textContent = PHASE_LABEL[timer.phase];
     el.phase.dataset.phase = timer.phase;
     el.start.textContent = START_LABEL[timer.status];
-    el.sessionsToday.textContent = `Сессий за день: ${timer.sessionsToday}`;
-    el.sessionsInBlock.textContent =
-        `Сессий в блоке: ${timer.completedSessions} / ${settings.sessionsPerBlock}`;
+    renderStats();
+    renderHistory();
 
     clearInterval(tickId);
     tickId = null;
@@ -153,7 +237,8 @@ const render = () => {
 // --- UI events ---
 
 el.start.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ action: timer.status === 'running' ? 'pause' : 'start' });
+    const action = timer.status === 'running' ? 'pause' : 'start';
+    chrome.runtime.sendMessage({ action });
 });
 el.reset.addEventListener('click', () => chrome.runtime.sendMessage({ action: 'reset' }));
 el.skip.addEventListener('click', () => chrome.runtime.sendMessage({ action: 'skip' }));
@@ -175,12 +260,22 @@ el.save.addEventListener('click', async () => {
     el.modal.style.display = 'none';
 });
 
+el.toggleHistory.addEventListener('click', () => {
+    historyOpen = !historyOpen;
+    renderHistory();
+});
+
+el.clearHistory.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ action: 'clear-history' });
+});
+
 // --- storage sync ---
 
 chrome.storage.local.onChanged.addListener((changes) => {
     if (changes.settings) settings = { ...DEFAULT_SETTINGS, ...changes.settings.newValue };
     if (changes.timer) timer = { ...DEFAULT_TIMER, ...changes.timer.newValue };
-    if (changes.settings || changes.timer) render();
+    if (changes.history) history = changes.history.newValue || [];
+    if (changes.settings || changes.timer || changes.history) render();
 });
 
 chrome.runtime.onMessage.addListener((message) => {
@@ -190,8 +285,9 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 (async () => {
-    const stored = await chrome.storage.local.get(['settings', 'timer']);
+    const stored = await chrome.storage.local.get(['settings', 'timer', 'history']);
     settings = { ...DEFAULT_SETTINGS, ...(stored.settings || {}) };
     timer = { ...DEFAULT_TIMER, ...(stored.timer || {}) };
+    history = stored.history || [];
     render();
 })();

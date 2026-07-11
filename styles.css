@@ -140,3 +140,83 @@
 #close:hover {
     color: #111;
 }
+
+.history {
+    display: none;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid #eee;
+}
+
+.history-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.history-head h3 {
+    margin: 0;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: #888;
+}
+
+.btn-quiet {
+    padding: 3px 8px;
+    background: none;
+    border-color: transparent;
+    color: #888;
+    font-size: 12px;
+}
+
+.btn-quiet:hover {
+    background: #f2f2f2;
+    color: #111;
+}
+
+.history-list {
+    margin: 0;
+    padding: 0;
+    max-height: 180px;
+    overflow-y: auto;
+    list-style: none;
+}
+
+.history-item {
+    display: grid;
+    grid-template-columns: 100px 120px 1fr;
+    gap: 8px;
+    align-items: baseline;
+    padding: 6px 0;
+    border-bottom: 1px solid #f2f2f2;
+    font-size: 13px;
+}
+
+.history-item:last-child {
+    border-bottom: none;
+}
+
+.history-time {
+    color: #888;
+    font-variant-numeric: tabular-nums;
+}
+
+.history-label {
+    color: #555;
+}
+
+.history-item[data-phase="work"] .history-label {
+    color: #c0392b;
+}
+
+.history-duration {
+    color: #111;
+}
+
+.history-empty {
+    padding: 6px 0;
+    color: #888;
+    font-size: 13px;
+}

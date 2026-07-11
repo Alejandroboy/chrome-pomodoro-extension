@@ -12,6 +12,8 @@ const DEFAULT_TIMER = {
     status: 'idle',         // idle | running | paused
     endsAt: null,           // timestamp of the phase end, set while status === 'running'
     remainingMs: null,      // time left, set while status === 'paused'
+    startedAt: null,        // timestamp of the first start of the current phase
+    plannedMs: null,        // full length of the current phase, frozen at its first start
     completedSessions: 0,   // work sessions since the last long break
     sessionsToday: 0,
     day: null,              // 'YYYY-MM-DD', used to reset sessionsToday on a new day
@@ -22,6 +24,16 @@ const PHASE_LABEL = {
     shortBreak: 'короткий перерыв',
     longBreak: 'длинный перерыв',
 };
+
+const PHASE_SETTING = {
+    work: 'workMinutes',
+    shortBreak: 'shortMinutes',
+    longBreak: 'longMinutes',
+};
+
+// Interrupted phases shorter than this are not worth a history entry.
+const MIN_RECORD_MS = 30_000;
+const HISTORY_LIMIT = 500;
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -37,15 +49,42 @@ const getTimer = async () => {
 
 const saveTimer = (timer) => chrome.storage.local.set({ timer });
 
-const PHASE_SETTING = {
-    work: 'workMinutes',
-    shortBreak: 'shortMinutes',
-    longBreak: 'longMinutes',
-};
-
 const phaseDurationMs = (phase, settings) => {
     const minutes = Number(settings[PHASE_SETTING[phase]]);
     return Math.max(1, minutes || 1) * 60_000;
+};
+
+const remainingMs = (timer) => {
+    if (timer.status === 'running') return Math.max(0, timer.endsAt - Date.now());
+    if (timer.status === 'paused') return Math.max(0, timer.remainingMs || 0);
+    return 0;
+};
+
+// --- history ---
+
+const addHistoryEntry = async (entry) => {
+    const { history = [] } = await chrome.storage.local.get('history');
+    await chrome.storage.local.set({ history: [entry, ...history].slice(0, HISTORY_LIMIT) });
+};
+
+// Write a history entry for the phase that is about to end.
+const recordPhase = async (timer, completed) => {
+    if (!timer.startedAt || !timer.plannedMs) return;   // phase was never started
+
+    const actualMs = completed
+        ? timer.plannedMs
+        : Math.max(0, timer.plannedMs - remainingMs(timer));
+
+    if (!completed && actualMs < MIN_RECORD_MS) return;
+
+    await addHistoryEntry({
+        phase: timer.phase,
+        startedAt: timer.startedAt,
+        endedAt: Date.now(),
+        plannedMs: timer.plannedMs,
+        actualMs,
+        completed,
+    });
 };
 
 // --- commands ---
@@ -54,12 +93,19 @@ const start = async () => {
     const settings = await getSettings();
     const timer = await getTimer();
 
-    // resume from a pause, otherwise run the whole phase
     const isResume = timer.status === 'paused' && timer.remainingMs > 0;
     const duration = isResume ? timer.remainingMs : phaseDurationMs(timer.phase, settings);
-
     const endsAt = Date.now() + duration;
-    await saveTimer({ ...timer, status: 'running', endsAt, remainingMs: null });
+
+    await saveTimer({
+        ...timer,
+        status: 'running',
+        endsAt,
+        remainingMs: null,
+        startedAt: isResume ? timer.startedAt : Date.now(),
+        plannedMs: isResume ? timer.plannedMs : duration,
+    });
+
     chrome.alarms.create(ALARM, { when: endsAt });
 };
 
@@ -71,23 +117,39 @@ const pause = async () => {
     await saveTimer({
         ...timer,
         status: 'paused',
-        remainingMs: Math.max(0, timer.endsAt - Date.now()),
+        remainingMs: remainingMs(timer),
         endsAt: null,
     });
 };
 
+// Drop the current phase and put it back to the start.
 const reset = async () => {
     await chrome.alarms.clear(ALARM);
     const timer = await getTimer();
-    await saveTimer({ ...timer, status: 'idle', endsAt: null, remainingMs: null });
+    await recordPhase(timer, false);
+
+    await saveTimer({
+        ...timer,
+        status: 'idle',
+        endsAt: null,
+        remainingMs: null,
+        startedAt: null,
+        plannedMs: null,
+    });
 };
 
-const nextPhase = (timer, settings) => {
+const nextPhase = (timer, settings, completed) => {
     if (timer.phase !== 'work') {
         // a new block starts after a long break
         const completedSessions = timer.phase === 'longBreak' ? 0 : timer.completedSessions;
         return { phase: 'work', completedSessions };
     }
+
+    // a skipped work session counts for nothing
+    if (!completed) {
+        return { phase: 'shortBreak', completedSessions: timer.completedSessions };
+    }
+
     const completedSessions = timer.completedSessions + 1;
     const perBlock = Math.max(1, Number(settings.sessionsPerBlock) || 1);
     return {
@@ -97,17 +159,20 @@ const nextPhase = (timer, settings) => {
 };
 
 // Move to the next phase. It lands in 'idle', so the user starts it explicitly.
-const advance = async ({ notify }) => {
+const advance = async ({ completed, notify }) => {
     await chrome.alarms.clear(ALARM);
     const settings = await getSettings();
     const timer = await getTimer();
     const finished = timer.phase;
 
+    await recordPhase(timer, completed);
+
     const day = today();
     const base = timer.day === day ? timer.sessionsToday : 0;
-    const sessionsToday = finished === 'work' ? base + 1 : base;
+    const countsAsSession = finished === 'work' && completed;
+    const sessionsToday = countsAsSession ? base + 1 : base;
 
-    const { phase, completedSessions } = nextPhase(timer, settings);
+    const { phase, completedSessions } = nextPhase(timer, settings, completed);
 
     await saveTimer({
         ...timer,
@@ -118,6 +183,8 @@ const advance = async ({ notify }) => {
         status: 'idle',
         endsAt: null,
         remainingMs: null,
+        startedAt: null,
+        plannedMs: null,
     });
 
     if (notify) {
@@ -138,7 +205,7 @@ const reconcile = async () => {
     if (timer.status !== 'running') return;
 
     if (Date.now() >= timer.endsAt) {
-        await advance({ notify: true });
+        await advance({ completed: true, notify: true });
     } else {
         chrome.alarms.create(ALARM, { when: timer.endsAt });
     }
@@ -158,7 +225,8 @@ chrome.runtime.onMessage.addListener((request) => {
         case 'start': start(); break;
         case 'pause': pause(); break;
         case 'reset': reset(); break;
-        case 'skip': advance({ notify: false }); break;
+        case 'skip': advance({ completed: false, notify: false }); break;
+        case 'clear-history': chrome.storage.local.set({ history: [] }); break;
     }
 });
 
