@@ -95,6 +95,34 @@
     font-variant-numeric: tabular-nums;
 }
 
+.task {
+    margin-bottom: 10px;
+}
+
+.task.hidden {
+    display: none;
+}
+
+.task input {
+    width: 100%;
+    padding: 7px 10px;
+    background: #fafafa;
+    border: 1px solid #e2e2e2;
+    border-radius: 8px;
+    font: inherit;
+    color: #111;
+}
+
+.task input::placeholder {
+    color: #aaa;
+}
+
+.task input:focus {
+    outline: none;
+    border-color: #c0392b;
+    background: #fff;
+}
+
 .controls {
     display: flex;
     flex-wrap: wrap;
@@ -206,6 +234,34 @@
     color: #999;
 }
 
+.top-labels {
+    margin: 10px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.top-labels li {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 3px 0;
+    font-size: 12px;
+}
+
+.top-label-name {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: #555;
+}
+
+.top-label-value {
+    color: #999;
+    font-variant-numeric: tabular-nums;
+}
+
+/* --- history --- */
+
 .history {
     display: none;
     margin-top: 14px;
@@ -300,6 +356,7 @@
 }
 
 .widget.settings-open .top,
+.widget.settings-open .task,
 .widget.settings-open > .controls,
 .widget.settings-open .week,
 .widget.settings-open .history {

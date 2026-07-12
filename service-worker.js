@@ -22,9 +22,12 @@ const DEFAULT_TIMER = {
     startedAt: null,        // timestamp of the first start of the current phase
     plannedMs: null,        // full length of the current phase, frozen at its first start
     completedSessions: 0,   // work sessions since the last long break
+    label: '',              // what the user is working on, carried between work sessions
 };
 
-const EMPTY_DAY = { focusMs: 0, breakMs: 0, sessions: 0, interrupted: 0 };
+const EMPTY_DAY = { focusMs: 0, breakMs: 0, sessions: 0, interrupted: 0, labels: {} };
+
+const LABEL_MAX_LENGTH = 60;
 
 const PHASE_LABEL = {
     work: 'работа',
@@ -145,6 +148,13 @@ const applyToDay = (day, entry) => {
     } else {
         next.interrupted += 1;
     }
+
+    if (entry.label) {
+        const labels = { ...next.labels };
+        labels[entry.label] = (labels[entry.label] || 0) + entry.actualMs;
+        next.labels = labels;
+    }
+
     return next;
 };
 
@@ -177,6 +187,7 @@ const recordPhase = async (timer, completed) => {
 
     await saveEntry({
         phase: timer.phase,
+        label: timer.phase === 'work' ? timer.label : '',
         startedAt: timer.startedAt,
         endedAt: Date.now(),
         plannedMs: timer.plannedMs,
@@ -231,6 +242,15 @@ const pause = async () => {
         remainingMs: remainingMs(timer),
         endsAt: null,
     });
+};
+
+// The label applies to the running work session, so it can be edited mid-phase.
+const setLabel = async (raw) => {
+    const timer = await getTimer();
+    const label = String(raw || '').trim().slice(0, LABEL_MAX_LENGTH);
+    if (label === timer.label) return;
+
+    await saveTimer({ ...timer, label });
 };
 
 // Drop the current phase and put it back to the start.
@@ -362,6 +382,7 @@ chrome.runtime.onMessage.addListener((request) => {
         case 'pause': pause(); break;
         case 'reset': reset(); break;
         case 'skip': advance({ completed: false, notify: false }); break;
+        case 'set-label': setLabel(request.label); break;
         case 'clear-history': chrome.storage.local.set({ history: [] }); break;
         case 'clear-stats': chrome.storage.local.set({ history: [], daily: {} }); break;
     }

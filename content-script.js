@@ -15,9 +15,10 @@ const DEFAULT_TIMER = {
     startedAt: null,
     plannedMs: null,
     completedSessions: 0,
+    label: '',
 };
 
-const EMPTY_DAY = { focusMs: 0, breakMs: 0, sessions: 0, interrupted: 0 };
+const EMPTY_DAY = { focusMs: 0, breakMs: 0, sessions: 0, interrupted: 0, labels: {} };
 
 const PHASE_LABEL = {
     work: 'Работа',
@@ -38,6 +39,8 @@ const START_LABEL = {
 };
 
 const HISTORY_VISIBLE = 50;
+const SUGGESTED_LABELS = 8;
+const TOP_LABELS_SHOWN = 3;
 
 const host = document.createElement('div');
 host.style.display = 'none';
@@ -67,6 +70,12 @@ shadow.innerHTML = `
         </dl>
     </div>
 
+    <div class="task" id="task">
+        <input id="label" list="labelSuggestions" maxlength="60" autocomplete="off"
+               placeholder="Над чем работаешь?">
+        <datalist id="labelSuggestions"></datalist>
+    </div>
+
     <div class="controls">
         <button id="start" class="btn btn-primary">Запустить</button>
         <button id="reset" class="btn">Сбросить</button>
@@ -84,6 +93,7 @@ shadow.innerHTML = `
             <button id="clearStats" class="btn btn-quiet" title="Стереть журнал и всю статистику">Сбросить</button>
         </div>
         <div class="week-bars" id="weekBars"></div>
+        <ul class="top-labels" id="topLabels"></ul>
     </div>
 
     <div class="history" id="history">
@@ -147,6 +157,10 @@ const el = {
     week: shadow.querySelector('#week'),
     weekBars: shadow.querySelector('#weekBars'),
     weekTotal: shadow.querySelector('#weekTotal'),
+    topLabels: shadow.querySelector('#topLabels'),
+    task: shadow.querySelector('#task'),
+    label: shadow.querySelector('#label'),
+    labelSuggestions: shadow.querySelector('#labelSuggestions'),
     clearStats: shadow.querySelector('#clearStats'),
     toggleHistory: shadow.querySelector('#toggleHistory'),
     clearHistory: shadow.querySelector('#clearHistory'),
@@ -242,7 +256,8 @@ const renderHistory = () => {
 
         const label = document.createElement('span');
         label.className = 'history-label';
-        label.textContent = PHASE_LABEL[entry.phase];
+        label.textContent = entry.label || PHASE_LABEL[entry.phase];
+        label.title = label.textContent;
 
         const duration = document.createElement('span');
         duration.className = 'history-duration';
@@ -278,6 +293,44 @@ const weekStats = () => {
     }
 
     return days;
+};
+
+// Minutes per label over the shown week, biggest first.
+const weekLabels = () => {
+    const totals = new Map();
+
+    for (let offset = WEEK_DAYS_SHOWN - 1; offset >= 0; offset -= 1) {
+        const date = new Date();
+        date.setDate(date.getDate() - offset);
+        const { labels } = dayTotals(dateKey(date));
+
+        for (const [label, ms] of Object.entries(labels)) {
+            totals.set(label, (totals.get(label) || 0) + ms);
+        }
+    }
+
+    return [...totals.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, TOP_LABELS_SHOWN);
+};
+
+const renderTopLabels = () => {
+    el.topLabels.replaceChildren();
+
+    for (const [label, ms] of weekLabels()) {
+        const item = document.createElement('li');
+
+        const name = document.createElement('span');
+        name.className = 'top-label-name';
+        name.textContent = label;
+
+        const value = document.createElement('span');
+        value.className = 'top-label-value';
+        value.textContent = `${minutesOf(ms)} мин`;
+
+        item.append(name, value);
+        el.topLabels.append(item);
+    }
 };
 
 const renderWeek = () => {
@@ -317,6 +370,35 @@ const renderWeek = () => {
         column.append(value, track, label);
         el.weekBars.append(column);
     }
+
+    renderTopLabels();
+};
+
+// Labels the user typed before, newest first - offered as autocomplete.
+const renderLabelSuggestions = () => {
+    const seen = [];
+    for (const entry of history) {
+        if (!entry.label || seen.includes(entry.label)) continue;
+        seen.push(entry.label);
+        if (seen.length === SUGGESTED_LABELS) break;
+    }
+
+    el.labelSuggestions.replaceChildren(...seen.map((label) => {
+        const option = document.createElement('option');
+        option.value = label;
+        return option;
+    }));
+};
+
+const renderLabel = () => {
+    el.task.classList.toggle('hidden', timer.phase !== 'work');
+
+    // never overwrite what is being typed right now
+    if (shadow.activeElement !== el.label) {
+        el.label.value = timer.label || '';
+    }
+
+    renderLabelSuggestions();
 };
 
 const renderStats = () => {
@@ -332,6 +414,7 @@ const render = () => {
     el.phase.textContent = PHASE_LABEL[timer.phase];
     el.phase.dataset.phase = timer.phase;
     el.start.textContent = START_LABEL[timer.status];
+    renderLabel();
     renderStats();
     renderWeek();
     renderHistory();
@@ -365,9 +448,22 @@ const toggleWidget = () => {
 // --- UI events ---
 
 el.start.addEventListener('click', () => {
+    commitLabel();   // whatever is typed in the field belongs to the session being started
     const action = timer.status === 'running' ? 'pause' : 'start';
     chrome.runtime.sendMessage({ action });
 });
+const commitLabel = () => {
+    chrome.runtime.sendMessage({ action: 'set-label', label: el.label.value });
+};
+
+el.label.addEventListener('change', commitLabel);
+el.label.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+        commitLabel();
+        el.label.blur();
+    }
+});
+
 el.reset.addEventListener('click', () => chrome.runtime.sendMessage({ action: 'reset' }));
 el.skip.addEventListener('click', () => chrome.runtime.sendMessage({ action: 'skip' }));
 el.close.addEventListener('click', hideWidget);
