@@ -1,4 +1,9 @@
 const ALARM = 'pomodoro-end';
+const BADGE_ALARM = 'badge-tick';
+
+// Chrome clamps periodic alarms to 30 seconds, which is also all we need:
+// the badge counts whole minutes, so it can never be off by more than that.
+const BADGE_PERIOD_MINUTES = 0.5;
 
 const DEFAULT_SETTINGS = {
     workMinutes: 25,
@@ -31,6 +36,14 @@ const PHASE_SETTING = {
     longBreak: 'longMinutes',
 };
 
+const PHASE_COLOR = {
+    work: '#c0392b',
+    shortBreak: '#2f855a',
+    longBreak: '#2b6cb0',
+};
+
+const PAUSED_COLOR = '#8a8a8a';
+
 // Interrupted phases shorter than this are not worth recording.
 const MIN_RECORD_MS = 30_000;
 
@@ -61,7 +74,10 @@ const getTimer = async () => {
     return { ...DEFAULT_TIMER, ...(timer || {}) };
 };
 
-const saveTimer = (timer) => chrome.storage.local.set({ timer });
+const saveTimer = async (timer) => {
+    await chrome.storage.local.set({ timer });
+    await syncBadge(timer);
+};
 
 const phaseDurationMs = (phase, settings) => {
     const minutes = Number(settings[PHASE_SETTING[phase]]);
@@ -72,6 +88,42 @@ const remainingMs = (timer) => {
     if (timer.status === 'running') return Math.max(0, timer.endsAt - Date.now());
     if (timer.status === 'paused') return Math.max(0, timer.remainingMs || 0);
     return 0;
+};
+
+// --- badge ---
+
+const badgeText = (timer) => {
+    if (timer.status === 'idle') return '';
+
+    const left = remainingMs(timer);
+    if (left <= 0) return '';
+    if (left < 60_000) return '<1';
+    return String(Math.ceil(left / 60_000));
+};
+
+const badgeTitle = (timer) => {
+    const phase = PHASE_LABEL[timer.phase];
+    if (timer.status === 'idle') return `Pomodoro — ${phase}, не запущено`;
+
+    const text = badgeText(timer);
+    const paused = timer.status === 'paused' ? ', пауза' : '';
+    return `Pomodoro — ${phase}: ${text} мин${paused}`;
+};
+
+// Redraw the badge and keep the ticking alarm alive only while it counts down.
+const syncBadge = async (timer) => {
+    const color = timer.status === 'paused' ? PAUSED_COLOR : PHASE_COLOR[timer.phase];
+
+    await chrome.action.setBadgeText({ text: badgeText(timer) });
+    await chrome.action.setBadgeBackgroundColor({ color });
+    await chrome.action.setBadgeTextColor({ color: '#ffffff' });
+    await chrome.action.setTitle({ title: badgeTitle(timer) });
+
+    if (timer.status === 'running') {
+        chrome.alarms.create(BADGE_ALARM, { periodInMinutes: BADGE_PERIOD_MINUTES });
+    } else {
+        await chrome.alarms.clear(BADGE_ALARM);
+    }
 };
 
 // --- history log + daily totals ---
@@ -252,19 +304,30 @@ const advance = async ({ completed, notify }) => {
 // The worker may have been asleep or killed: check the stored state against the clock.
 const reconcile = async () => {
     const timer = await getTimer();
-    if (timer.status !== 'running') return;
+
+    if (timer.status !== 'running') {
+        await syncBadge(timer);
+        return;
+    }
 
     if (Date.now() >= timer.endsAt) {
         await advance({ completed: true, notify: true });
     } else {
         chrome.alarms.create(ALARM, { when: timer.endsAt });
+        await syncBadge(timer);
     }
 };
 
 // --- events ---
 
-chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm.name === ALARM) reconcile();
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+    if (alarm.name === ALARM) {
+        reconcile();
+        return;
+    }
+    if (alarm.name === BADGE_ALARM) {
+        syncBadge(await getTimer());
+    }
 });
 
 chrome.runtime.onStartup.addListener(reconcile);
