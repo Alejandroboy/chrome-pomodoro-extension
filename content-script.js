@@ -6,6 +6,7 @@ const DEFAULT_SETTINGS = {
     dailyGoal: 8,
     autoStartBreaks: true,
     autoStartWork: false,
+    theme: 'auto',   // auto | light | dark
 };
 
 const DEFAULT_TIMER = {
@@ -135,6 +136,14 @@ shadow.innerHTML = `
             <span>Цель: сессий в день</span>
             <input type="number" min="1" id="dailyGoal">
         </label>
+        <label for="theme">
+            <span>Тема</span>
+            <select id="theme">
+                <option value="auto">Системная</option>
+                <option value="light">Светлая</option>
+                <option value="dark">Тёмная</option>
+            </select>
+        </label>
         <label for="autoStartBreaks">
             <span>Начинать перерыв автоматически</span>
             <input type="checkbox" id="autoStartBreaks">
@@ -186,6 +195,7 @@ const el = {
 
 const NUMBER_KEYS = ['workMinutes', 'shortMinutes', 'longMinutes', 'sessionsPerBlock', 'dailyGoal'];
 const FLAG_KEYS = ['autoStartBreaks', 'autoStartWork'];
+const CHOICE_KEYS = ['theme'];
 
 const inputs = {
     workMinutes: shadow.querySelector('#workMinutes'),
@@ -195,7 +205,10 @@ const inputs = {
     dailyGoal: shadow.querySelector('#dailyGoal'),
     autoStartBreaks: shadow.querySelector('#autoStartBreaks'),
     autoStartWork: shadow.querySelector('#autoStartWork'),
+    theme: shadow.querySelector('#theme'),
 };
+
+const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
 let settings = { ...DEFAULT_SETTINGS };
 let timer = { ...DEFAULT_TIMER };
@@ -240,6 +253,16 @@ const dateKey = (ts = Date.now()) => {
 };
 
 const dayTotals = (key) => ({ ...EMPTY_DAY, ...(daily[key] || {}) });
+
+// 'auto' follows the OS; anything else wins over it.
+const effectiveTheme = () => {
+    if (settings.theme === 'light' || settings.theme === 'dark') return settings.theme;
+    return darkQuery.matches ? 'dark' : 'light';
+};
+
+const renderTheme = () => {
+    el.widget.dataset.theme = effectiveTheme();
+};
 
 // --- rendering ---
 
@@ -432,6 +455,7 @@ const renderStats = () => {
 };
 
 const render = () => {
+    renderTheme();
     renderClock();
     el.phase.textContent = PHASE_LABEL[timer.phase];
     el.phase.dataset.phase = timer.phase;
@@ -557,6 +581,7 @@ document.addEventListener('pointerdown', (event) => {
 el.tune.addEventListener('click', () => {
     for (const key of NUMBER_KEYS) inputs[key].value = settings[key];
     for (const key of FLAG_KEYS) inputs[key].checked = Boolean(settings[key]);
+    for (const key of CHOICE_KEYS) inputs[key].value = settings[key];
     el.widget.classList.add('settings-open');
 });
 el.cancel.addEventListener('click', closeSettings);
@@ -572,6 +597,10 @@ el.save.addEventListener('click', async () => {
 
     for (const key of FLAG_KEYS) {
         next[key] = inputs[key].checked;
+    }
+
+    for (const key of CHOICE_KEYS) {
+        next[key] = inputs[key].value;
     }
 
     await chrome.storage.local.set({ settings: next });
@@ -612,6 +641,10 @@ chrome.storage.local.onChanged.addListener((changes) => {
     if (changes.history) history = changes.history.newValue || [];
     if (changes.daily) daily = changes.daily.newValue || {};
     if (changes.settings || changes.timer || changes.history || changes.daily) render();
+});
+
+darkQuery.addEventListener('change', () => {
+    if (settings.theme === 'auto') renderTheme();
 });
 
 chrome.runtime.onMessage.addListener((message) => {
