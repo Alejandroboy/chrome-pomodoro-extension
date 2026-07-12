@@ -197,6 +197,11 @@ const recordPhase = async (timer, completed) => {
     });
 };
 
+// Keys written by 1.x, when settings and the countdown shared one storage slot.
+const LEGACY_KEYS = ['workInterval', 'shortInterval', 'longInterval', 'sessionCount'];
+
+const dropLegacyKeys = () => chrome.storage.local.remove(LEGACY_KEYS);
+
 // One-off: build daily totals for users who already have a history log.
 const backfillDaily = async () => {
     const { history = [], daily } = await chrome.storage.local.get(['history', 'daily']);
@@ -391,6 +396,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 chrome.runtime.onStartup.addListener(reconcile);
 
 chrome.runtime.onInstalled.addListener(async () => {
+    await dropLegacyKeys();
     await backfillDaily();
     await reconcile();
 });
