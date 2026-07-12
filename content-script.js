@@ -71,11 +71,20 @@ shadow.innerHTML = `
         <button id="skip" class="btn">Пропустить</button>
         <span class="spacer"></span>
         <button id="tune" class="btn btn-quiet">Настроить</button>
+        <button id="toggleWeek" class="btn btn-quiet">Неделя</button>
         <button id="toggleHistory" class="btn btn-quiet">История</button>
     </div>
 
+    <div class="week" id="week">
+        <div class="panel-head">
+            <h3>Неделя</h3>
+            <span id="weekTotal" class="panel-note">0 мин</span>
+        </div>
+        <div class="week-bars" id="weekBars"></div>
+    </div>
+
     <div class="history" id="history">
-        <div class="history-head">
+        <div class="panel-head">
             <h3>История</h3>
             <button id="clearHistory" class="btn btn-quiet">Очистить</button>
         </div>
@@ -123,6 +132,10 @@ const el = {
     focusToday: shadow.querySelector('#focusToday'),
     sessionsToday: shadow.querySelector('#sessionsToday'),
     sessionsInBlock: shadow.querySelector('#sessionsInBlock'),
+    toggleWeek: shadow.querySelector('#toggleWeek'),
+    week: shadow.querySelector('#week'),
+    weekBars: shadow.querySelector('#weekBars'),
+    weekTotal: shadow.querySelector('#weekTotal'),
     toggleHistory: shadow.querySelector('#toggleHistory'),
     clearHistory: shadow.querySelector('#clearHistory'),
     history: shadow.querySelector('#history'),
@@ -141,6 +154,7 @@ let settings = { ...DEFAULT_SETTINGS };
 let timer = { ...DEFAULT_TIMER };
 let history = [];
 let historyOpen = false;
+let weekOpen = false;
 let tickId = null;
 
 const phaseDurationMs = (phase) => {
@@ -216,6 +230,79 @@ const renderHistory = () => {
     }
 };
 
+const WEEKDAYS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+const WEEK_DAYS_SHOWN = 7;
+const BAR_MIN_PERCENT = 3;   // so that an empty day still shows a baseline
+
+const dayKey = (date) => date.toDateString();
+
+// Focused minutes per day for the last 7 days, oldest first.
+const weekStats = () => {
+    const totals = new Map();
+    for (const entry of history) {
+        if (entry.phase !== 'work') continue;
+        const key = dayKey(new Date(entry.endedAt));
+        const day = totals.get(key) || { ms: 0, sessions: 0 };
+        day.ms += entry.actualMs;
+        day.sessions += entry.completed ? 1 : 0;
+        totals.set(key, day);
+    }
+
+    const days = [];
+    for (let offset = WEEK_DAYS_SHOWN - 1; offset >= 0; offset -= 1) {
+        const date = new Date();
+        date.setHours(0, 0, 0, 0);
+        date.setDate(date.getDate() - offset);
+        const day = totals.get(dayKey(date)) || { ms: 0, sessions: 0 };
+        days.push({
+            label: WEEKDAYS[date.getDay()],
+            isToday: offset === 0,
+            minutes: minutesOf(day.ms),
+            sessions: day.sessions,
+        });
+    }
+    return days;
+};
+
+const renderWeek = () => {
+    el.week.classList.toggle('open', weekOpen);
+    el.toggleWeek.textContent = weekOpen ? 'Скрыть неделю' : 'Неделя';
+    if (!weekOpen) return;
+
+    const days = weekStats();
+    const peak = Math.max(...days.map((day) => day.minutes));
+    const total = days.reduce((sum, day) => sum + day.minutes, 0);
+    el.weekTotal.textContent = `${total} мин за 7 дней`;
+
+    el.weekBars.replaceChildren();
+
+    for (const day of days) {
+        const column = document.createElement('div');
+        column.className = day.isToday ? 'week-day today' : 'week-day';
+        column.title = `${day.minutes} мин · сессий: ${day.sessions}`;
+
+        const value = document.createElement('span');
+        value.className = 'week-value';
+        value.textContent = day.minutes > 0 ? String(day.minutes) : '';
+
+        const track = document.createElement('div');
+        track.className = 'week-track';
+
+        const bar = document.createElement('div');
+        bar.className = 'week-bar';
+        const share = peak > 0 ? (day.minutes / peak) * 100 : 0;
+        bar.style.height = `${Math.max(BAR_MIN_PERCENT, share)}%`;
+
+        const label = document.createElement('span');
+        label.className = 'week-label';
+        label.textContent = day.label;
+
+        track.append(bar);
+        column.append(value, track, label);
+        el.weekBars.append(column);
+    }
+};
+
 const renderStats = () => {
     const now = new Date();
     const focusedMs = history
@@ -233,6 +320,7 @@ const render = () => {
     el.phase.dataset.phase = timer.phase;
     el.start.textContent = START_LABEL[timer.status];
     renderStats();
+    renderWeek();
     renderHistory();
 
     clearInterval(tickId);
@@ -303,6 +391,11 @@ el.save.addEventListener('click', async () => {
     }
     await chrome.storage.local.set({ settings: next });
     closeSettings();
+});
+
+el.toggleWeek.addEventListener('click', () => {
+    weekOpen = !weekOpen;
+    renderWeek();
 });
 
 el.toggleHistory.addEventListener('click', () => {
