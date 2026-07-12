@@ -242,6 +242,25 @@ const render = () => {
     }
 };
 
+// --- widget visibility ---
+
+const isVisible = () => host.style.display !== 'none';
+
+const closeSettings = () => el.widget.classList.remove('settings-open');
+
+const hideWidget = () => {
+    closeSettings();
+    host.style.display = 'none';
+};
+
+const toggleWidget = () => {
+    if (isVisible()) {
+        hideWidget();
+    } else {
+        host.style.display = 'block';
+    }
+};
+
 // --- UI events ---
 
 el.start.addEventListener('click', () => {
@@ -250,13 +269,31 @@ el.start.addEventListener('click', () => {
 });
 el.reset.addEventListener('click', () => chrome.runtime.sendMessage({ action: 'reset' }));
 el.skip.addEventListener('click', () => chrome.runtime.sendMessage({ action: 'skip' }));
-el.close.addEventListener('click', () => { host.style.display = 'none'; });
+el.close.addEventListener('click', hideWidget);
+
+// Esc closes the settings first, then the widget itself.
+document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !isVisible()) return;
+
+    if (el.widget.classList.contains('settings-open')) {
+        closeSettings();
+    } else {
+        hideWidget();
+    }
+});
+
+// A click outside dismisses the settings, but leaves the timer on screen.
+document.addEventListener('pointerdown', (event) => {
+    if (!isVisible() || !el.widget.classList.contains('settings-open')) return;
+    if (event.composedPath().includes(host)) return;
+    closeSettings();
+});
 
 el.tune.addEventListener('click', () => {
     for (const key of SETTING_KEYS) inputs[key].value = settings[key];
     el.widget.classList.add('settings-open');
 });
-el.cancel.addEventListener('click', () => el.widget.classList.remove('settings-open'));
+el.cancel.addEventListener('click', closeSettings);
 
 el.save.addEventListener('click', async () => {
     const next = { ...settings };
@@ -265,7 +302,7 @@ el.save.addEventListener('click', async () => {
         if (Number.isFinite(value) && value >= 1) next[key] = value;
     }
     await chrome.storage.local.set({ settings: next });
-    el.widget.classList.remove('settings-open');
+    closeSettings();
 });
 
 el.toggleHistory.addEventListener('click', () => {
@@ -287,9 +324,7 @@ chrome.storage.local.onChanged.addListener((changes) => {
 });
 
 chrome.runtime.onMessage.addListener((message) => {
-    if (message.action === 'toggle-widget') {
-        host.style.display = host.style.display === 'none' ? 'block' : 'none';
-    }
+    if (message.action === 'toggle-widget') toggleWidget();
 });
 
 (async () => {
