@@ -10,6 +10,8 @@ const DEFAULT_SETTINGS = {
     shortMinutes: 5,
     longMinutes: 15,
     sessionsPerBlock: 4,
+    autoStartBreaks: true,
+    autoStartWork: false,
 };
 
 const DEFAULT_TIMER = {
@@ -267,7 +269,12 @@ const nextPhase = (timer, settings, completed) => {
     };
 };
 
-// Move to the next phase. It lands in 'idle', so the user starts it explicitly.
+const shouldAutoStart = (phase, settings) => (
+    phase === 'work' ? Boolean(settings.autoStartWork) : Boolean(settings.autoStartBreaks)
+);
+
+// Move to the next phase. It starts on its own only if the settings say so;
+// otherwise it waits in 'idle' for an explicit start.
 const advance = async ({ completed, notify }) => {
     await chrome.alarms.clear(ALARM);
     const settings = await getSettings();
@@ -277,6 +284,7 @@ const advance = async ({ completed, notify }) => {
     await recordPhase(timer, completed);
 
     const { phase, completedSessions } = nextPhase(timer, settings, completed);
+    const autoStart = shouldAutoStart(phase, settings);
 
     await saveTimer({
         ...timer,
@@ -289,16 +297,27 @@ const advance = async ({ completed, notify }) => {
         plannedMs: null,
     });
 
-    if (notify) {
-        chrome.notifications.create(ALARM, {
-            type: 'basic',
-            iconUrl: chrome.runtime.getURL('images/icon-128.png'),
-            title: finished === 'work' ? 'Рабочая сессия окончена' : 'Перерыв окончен',
-            message: `Дальше — ${PHASE_LABEL[phase]}`,
-            buttons: [{ title: `Начать: ${PHASE_LABEL[phase]}` }],
-            requireInteraction: true,
-        });
+    if (notify) notifyPhaseEnd(finished, phase, autoStart);
+    if (autoStart) await start();
+};
+
+// An auto-started phase needs no action button - it is already running.
+const notifyPhaseEnd = (finished, next, autoStart) => {
+    const options = {
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('images/icon-128.png'),
+        title: finished === 'work' ? 'Рабочая сессия окончена' : 'Перерыв окончен',
+        message: autoStart
+            ? `Начался ${PHASE_LABEL[next]}`
+            : `Дальше — ${PHASE_LABEL[next]}`,
+        requireInteraction: !autoStart,
+    };
+
+    if (!autoStart) {
+        options.buttons = [{ title: `Начать: ${PHASE_LABEL[next]}` }];
     }
+
+    chrome.notifications.create(ALARM, options);
 };
 
 // The worker may have been asleep or killed: check the stored state against the clock.

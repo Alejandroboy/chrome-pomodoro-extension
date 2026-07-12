@@ -3,6 +3,8 @@ const DEFAULT_SETTINGS = {
     shortMinutes: 5,
     longMinutes: 15,
     sessionsPerBlock: 4,
+    autoStartBreaks: true,
+    autoStartWork: false,
 };
 
 const DEFAULT_TIMER = {
@@ -110,6 +112,14 @@ shadow.innerHTML = `
             <span>Сессий в блоке</span>
             <input type="number" min="1" id="sessionsPerBlock">
         </label>
+        <label for="autoStartBreaks">
+            <span>Начинать перерыв автоматически</span>
+            <input type="checkbox" id="autoStartBreaks">
+        </label>
+        <label for="autoStartWork">
+            <span>Начинать работу автоматически</span>
+            <input type="checkbox" id="autoStartWork">
+        </label>
         <div class="controls">
             <button id="save" class="btn btn-primary">Сохранить</button>
             <button id="cancel" class="btn">Отмена</button>
@@ -144,12 +154,16 @@ const el = {
     historyList: shadow.querySelector('#historyList'),
 };
 
-const SETTING_KEYS = ['workMinutes', 'shortMinutes', 'longMinutes', 'sessionsPerBlock'];
+const NUMBER_KEYS = ['workMinutes', 'shortMinutes', 'longMinutes', 'sessionsPerBlock'];
+const FLAG_KEYS = ['autoStartBreaks', 'autoStartWork'];
+
 const inputs = {
     workMinutes: shadow.querySelector('#workMinutes'),
     shortMinutes: shadow.querySelector('#shortMinutes'),
     longMinutes: shadow.querySelector('#longMinutes'),
     sessionsPerBlock: shadow.querySelector('#sessionsPerBlock'),
+    autoStartBreaks: shadow.querySelector('#autoStartBreaks'),
+    autoStartWork: shadow.querySelector('#autoStartWork'),
 };
 
 let settings = { ...DEFAULT_SETTINGS };
@@ -377,17 +391,25 @@ document.addEventListener('pointerdown', (event) => {
 });
 
 el.tune.addEventListener('click', () => {
-    for (const key of SETTING_KEYS) inputs[key].value = settings[key];
+    for (const key of NUMBER_KEYS) inputs[key].value = settings[key];
+    for (const key of FLAG_KEYS) inputs[key].checked = Boolean(settings[key]);
     el.widget.classList.add('settings-open');
 });
 el.cancel.addEventListener('click', closeSettings);
 
 el.save.addEventListener('click', async () => {
     const next = { ...settings };
-    for (const key of SETTING_KEYS) {
+
+    for (const key of NUMBER_KEYS) {
         const value = Math.floor(Number(inputs[key].value));
+        // a blank or nonsense field keeps the previous value instead of breaking the timer
         if (Number.isFinite(value) && value >= 1) next[key] = value;
     }
+
+    for (const key of FLAG_KEYS) {
+        next[key] = inputs[key].checked;
+    }
+
     await chrome.storage.local.set({ settings: next });
     closeSettings();
 });
