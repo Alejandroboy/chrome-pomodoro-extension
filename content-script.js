@@ -45,50 +45,33 @@ const shadow = host.attachShadow({ mode: 'open' });
 shadow.innerHTML = `
 <link rel="stylesheet" href="${chrome.runtime.getURL('styles.css')}">
 <div class="widget">
-    <button id="close" title="Закрыть">×</button>
-    <h2>Pomodoro</h2>
-    <div class="container">
-        <div class="half">
+    <div class="head">
+        <h2>Pomodoro</h2>
+        <button id="close" title="Закрыть">×</button>
+    </div>
+
+    <div class="top">
+        <div class="clock">
             <div id="phase" class="phase">Работа</div>
             <div id="timer" class="timer">25:00</div>
-            <div class="controls">
-                <button id="start" class="btn btn-primary">Запустить</button>
-                <button id="reset" class="btn">Сбросить</button>
-                <button id="skip" class="btn">Пропустить</button>
-            </div>
         </div>
-        <div class="half relative">
-            <p id="focusToday">В фокусе сегодня: 0 мин</p>
-            <p id="sessionsToday">Сессий за день: 0</p>
-            <p id="sessionsInBlock">Сессий в блоке: 0 / 4</p>
-            <div class="controls">
-                <button id="tune" class="btn">Настроить</button>
-                <button id="toggleHistory" class="btn">История</button>
-            </div>
+        <dl class="stats">
+            <dt>В фокусе сегодня</dt>
+            <dd id="focusToday">0 мин</dd>
+            <dt>Сессий за день</dt>
+            <dd id="sessionsToday">0</dd>
+            <dt>Сессий в блоке</dt>
+            <dd id="sessionsInBlock">0 / 4</dd>
+        </dl>
+    </div>
 
-            <div class="modal" id="modal">
-                <label for="workMinutes">
-                    <span>Минут рабочей сессии</span>
-                    <input type="number" min="1" id="workMinutes">
-                </label>
-                <label for="shortMinutes">
-                    <span>Минут короткого перерыва</span>
-                    <input type="number" min="1" id="shortMinutes">
-                </label>
-                <label for="longMinutes">
-                    <span>Минут длинного перерыва</span>
-                    <input type="number" min="1" id="longMinutes">
-                </label>
-                <label for="sessionsPerBlock">
-                    <span>Сессий в блоке</span>
-                    <input type="number" min="1" id="sessionsPerBlock">
-                </label>
-                <div class="controls">
-                    <button id="save" class="btn btn-primary">Сохранить</button>
-                    <button id="cancel" class="btn">Отмена</button>
-                </div>
-            </div>
-        </div>
+    <div class="controls">
+        <button id="start" class="btn btn-primary">Запустить</button>
+        <button id="reset" class="btn">Сбросить</button>
+        <button id="skip" class="btn">Пропустить</button>
+        <span class="spacer"></span>
+        <button id="tune" class="btn btn-quiet">Настроить</button>
+        <button id="toggleHistory" class="btn btn-quiet">История</button>
     </div>
 
     <div class="history" id="history">
@@ -98,10 +81,35 @@ shadow.innerHTML = `
         </div>
         <ul class="history-list" id="historyList"></ul>
     </div>
+
+    <div class="modal" id="modal">
+        <h3>Настройки</h3>
+        <label for="workMinutes">
+            <span>Минут рабочей сессии</span>
+            <input type="number" min="1" id="workMinutes">
+        </label>
+        <label for="shortMinutes">
+            <span>Минут короткого перерыва</span>
+            <input type="number" min="1" id="shortMinutes">
+        </label>
+        <label for="longMinutes">
+            <span>Минут длинного перерыва</span>
+            <input type="number" min="1" id="longMinutes">
+        </label>
+        <label for="sessionsPerBlock">
+            <span>Сессий в блоке</span>
+            <input type="number" min="1" id="sessionsPerBlock">
+        </label>
+        <div class="controls">
+            <button id="save" class="btn btn-primary">Сохранить</button>
+            <button id="cancel" class="btn">Отмена</button>
+        </div>
+    </div>
 </div>
 `;
 
 const el = {
+    widget: shadow.querySelector('.widget'),
     phase: shadow.querySelector('#phase'),
     timer: shadow.querySelector('#timer'),
     start: shadow.querySelector('#start'),
@@ -153,9 +161,10 @@ const formatClock = (ms) => {
     return `${mm}:${ss}`;
 };
 
-const formatTime = (ts) => new Date(ts).toLocaleTimeString([], {
+const formatTime = (ts) => new Date(ts).toLocaleTimeString('ru-RU', {
     hour: '2-digit',
     minute: '2-digit',
+    hour12: false,
 });
 
 const minutesOf = (ms) => Math.round(ms / 60_000);
@@ -169,7 +178,7 @@ const renderClock = () => {
 };
 
 const renderHistory = () => {
-    el.history.style.display = historyOpen ? 'block' : 'none';
+    el.history.classList.toggle('open', historyOpen);
     el.toggleHistory.textContent = historyOpen ? 'Скрыть историю' : 'История';
     if (!historyOpen) return;
 
@@ -185,7 +194,7 @@ const renderHistory = () => {
 
     for (const entry of history.slice(0, HISTORY_VISIBLE)) {
         const item = document.createElement('li');
-        item.className = 'history-item';
+        item.className = entry.completed ? 'history-item' : 'history-item interrupted';
         item.dataset.phase = entry.phase;
 
         const time = document.createElement('span');
@@ -200,7 +209,7 @@ const renderHistory = () => {
         duration.className = 'history-duration';
         duration.textContent = entry.completed
             ? `${minutesOf(entry.plannedMs)} мин`
-            : `${minutesOf(entry.actualMs)} из ${minutesOf(entry.plannedMs)} мин · прервано`;
+            : `${minutesOf(entry.actualMs)} / ${minutesOf(entry.plannedMs)} мин · прервано`;
 
         item.append(time, label, duration);
         el.historyList.append(item);
@@ -213,10 +222,9 @@ const renderStats = () => {
         .filter((entry) => entry.phase === 'work' && isSameDay(entry.endedAt, now))
         .reduce((sum, entry) => sum + entry.actualMs, 0);
 
-    el.focusToday.textContent = `В фокусе сегодня: ${minutesOf(focusedMs)} мин`;
-    el.sessionsToday.textContent = `Сессий за день: ${timer.sessionsToday}`;
-    el.sessionsInBlock.textContent =
-        `Сессий в блоке: ${timer.completedSessions} / ${settings.sessionsPerBlock}`;
+    el.focusToday.textContent = `${minutesOf(focusedMs)} мин`;
+    el.sessionsToday.textContent = String(timer.sessionsToday);
+    el.sessionsInBlock.textContent = `${timer.completedSessions} / ${settings.sessionsPerBlock}`;
 };
 
 const render = () => {
@@ -246,9 +254,9 @@ el.close.addEventListener('click', () => { host.style.display = 'none'; });
 
 el.tune.addEventListener('click', () => {
     for (const key of SETTING_KEYS) inputs[key].value = settings[key];
-    el.modal.style.display = 'block';
+    el.widget.classList.add('settings-open');
 });
-el.cancel.addEventListener('click', () => { el.modal.style.display = 'none'; });
+el.cancel.addEventListener('click', () => el.widget.classList.remove('settings-open'));
 
 el.save.addEventListener('click', async () => {
     const next = { ...settings };
@@ -257,7 +265,7 @@ el.save.addEventListener('click', async () => {
         if (Number.isFinite(value) && value >= 1) next[key] = value;
     }
     await chrome.storage.local.set({ settings: next });
-    el.modal.style.display = 'none';
+    el.widget.classList.remove('settings-open');
 });
 
 el.toggleHistory.addEventListener('click', () => {
