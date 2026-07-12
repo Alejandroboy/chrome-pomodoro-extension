@@ -47,6 +47,8 @@
     color: #111;
 }
 
+/* --- timer + stats --- */
+
 .top {
     display: flex;
     align-items: flex-start;
@@ -95,6 +97,30 @@
     font-variant-numeric: tabular-nums;
 }
 
+/* --- daily goal --- */
+
+.goal {
+    height: 4px;
+    margin-bottom: 12px;
+    background: #f0f0f0;
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.goal-bar {
+    width: 0;
+    height: 100%;
+    background: #c0392b;
+    border-radius: 2px;
+    transition: width .3s ease;
+}
+
+.goal-bar.reached {
+    background: #2f855a;
+}
+
+/* --- session label --- */
+
 .task {
     margin-bottom: 10px;
 }
@@ -122,6 +148,8 @@
     border-color: #c0392b;
     background: #fff;
 }
+
+/* --- controls --- */
 
 .controls {
     display: flex;
@@ -172,6 +200,8 @@
     background: #f3f3f3;
     color: #111;
 }
+
+/* --- week chart --- */
 
 .week {
     display: none;
@@ -276,9 +306,15 @@
 .panel-head {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 8px;
     min-height: 26px;
     margin-bottom: 4px;
+}
+
+.panel-actions {
+    display: flex;
+    gap: 2px;
+    margin-left: auto;
 }
 
 .panel-head h3 {
@@ -351,11 +387,16 @@
     font-size: 13px;
 }
 
+/* --- settings view --- */
+
+/* The settings form replaces the timer view, so the widget grows to fit it
+   instead of scrolling a fixed-height overlay. */
 .modal {
     display: none;
 }
 
 .widget.settings-open .top,
+.widget.settings-open .goal,
 .widget.settings-open .task,
 .widget.settings-open > .controls,
 .widget.settings-open .week,

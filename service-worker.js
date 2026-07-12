@@ -10,6 +10,7 @@ const DEFAULT_SETTINGS = {
     shortMinutes: 5,
     longMinutes: 15,
     sessionsPerBlock: 4,
+    dailyGoal: 8,
     autoStartBreaks: true,
     autoStartWork: false,
 };
@@ -244,6 +245,22 @@ const pause = async () => {
     });
 };
 
+// Fires exactly once per day: the counter can only pass the goal by landing on it.
+const notifyGoalReached = async (settings) => {
+    const goal = Math.max(1, Number(settings.dailyGoal) || 1);
+    const { daily = {} } = await chrome.storage.local.get('daily');
+    const done = daily[dateKey()]?.sessions || 0;
+
+    if (done !== goal) return;
+
+    chrome.notifications.create('pomodoro-goal', {
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('images/icon-128.png'),
+        title: 'Дневная цель достигнута',
+        message: `${goal} сессий за день. Можно выдохнуть.`,
+    });
+};
+
 // The label applies to the running work session, so it can be edited mid-phase.
 const setLabel = async (raw) => {
     const timer = await getTimer();
@@ -302,6 +319,8 @@ const advance = async ({ completed, notify }) => {
     const finished = timer.phase;
 
     await recordPhase(timer, completed);
+
+    if (finished === 'work' && completed) await notifyGoalReached(settings);
 
     const { phase, completedSessions } = nextPhase(timer, settings, completed);
     const autoStart = shouldAutoStart(phase, settings);

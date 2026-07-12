@@ -3,6 +3,7 @@ const DEFAULT_SETTINGS = {
     shortMinutes: 5,
     longMinutes: 15,
     sessionsPerBlock: 4,
+    dailyGoal: 8,
     autoStartBreaks: true,
     autoStartWork: false,
 };
@@ -63,11 +64,15 @@ shadow.innerHTML = `
         <dl class="stats">
             <dt>В фокусе сегодня</dt>
             <dd id="focusToday">0 мин</dd>
-            <dt>Сессий за день</dt>
-            <dd id="sessionsToday">0</dd>
+            <dt>Цель дня</dt>
+            <dd id="sessionsToday">0 / 8</dd>
             <dt>Сессий в блоке</dt>
             <dd id="sessionsInBlock">0 / 4</dd>
         </dl>
+    </div>
+
+    <div class="goal">
+        <div class="goal-bar" id="goalBar"></div>
     </div>
 
     <div class="task" id="task">
@@ -99,7 +104,11 @@ shadow.innerHTML = `
     <div class="history" id="history">
         <div class="panel-head">
             <h3>История</h3>
-            <button id="clearHistory" class="btn btn-quiet" title="Очистить журнал, статистика останется">Очистить журнал</button>
+            <span class="panel-actions">
+                <button id="exportCsv" class="btn btn-quiet" title="Журнал в CSV">CSV</button>
+                <button id="exportJson" class="btn btn-quiet" title="Полный дамп в JSON">JSON</button>
+                <button id="clearHistory" class="btn btn-quiet" title="Очистить журнал, статистика останется">Очистить</button>
+            </span>
         </div>
         <ul class="history-list" id="historyList"></ul>
     </div>
@@ -121,6 +130,10 @@ shadow.innerHTML = `
         <label for="sessionsPerBlock">
             <span>Сессий в блоке</span>
             <input type="number" min="1" id="sessionsPerBlock">
+        </label>
+        <label for="dailyGoal">
+            <span>Цель: сессий в день</span>
+            <input type="number" min="1" id="dailyGoal">
         </label>
         <label for="autoStartBreaks">
             <span>Начинать перерыв автоматически</span>
@@ -153,6 +166,9 @@ const el = {
     focusToday: shadow.querySelector('#focusToday'),
     sessionsToday: shadow.querySelector('#sessionsToday'),
     sessionsInBlock: shadow.querySelector('#sessionsInBlock'),
+    goalBar: shadow.querySelector('#goalBar'),
+    exportCsv: shadow.querySelector('#exportCsv'),
+    exportJson: shadow.querySelector('#exportJson'),
     toggleWeek: shadow.querySelector('#toggleWeek'),
     week: shadow.querySelector('#week'),
     weekBars: shadow.querySelector('#weekBars'),
@@ -168,7 +184,7 @@ const el = {
     historyList: shadow.querySelector('#historyList'),
 };
 
-const NUMBER_KEYS = ['workMinutes', 'shortMinutes', 'longMinutes', 'sessionsPerBlock'];
+const NUMBER_KEYS = ['workMinutes', 'shortMinutes', 'longMinutes', 'sessionsPerBlock', 'dailyGoal'];
 const FLAG_KEYS = ['autoStartBreaks', 'autoStartWork'];
 
 const inputs = {
@@ -176,6 +192,7 @@ const inputs = {
     shortMinutes: shadow.querySelector('#shortMinutes'),
     longMinutes: shadow.querySelector('#longMinutes'),
     sessionsPerBlock: shadow.querySelector('#sessionsPerBlock'),
+    dailyGoal: shadow.querySelector('#dailyGoal'),
     autoStartBreaks: shadow.querySelector('#autoStartBreaks'),
     autoStartWork: shadow.querySelector('#autoStartWork'),
 };
@@ -403,10 +420,15 @@ const renderLabel = () => {
 
 const renderStats = () => {
     const today = dayTotals(dateKey());
+    const goal = Math.max(1, Number(settings.dailyGoal) || 1);
+    const done = today.sessions;
 
     el.focusToday.textContent = `${minutesOf(today.focusMs)} мин`;
-    el.sessionsToday.textContent = String(today.sessions);
+    el.sessionsToday.textContent = `${done} / ${goal}`;
     el.sessionsInBlock.textContent = `${timer.completedSessions} / ${settings.sessionsPerBlock}`;
+
+    el.goalBar.style.width = `${Math.min(100, (done / goal) * 100)}%`;
+    el.goalBar.classList.toggle('reached', done >= goal);
 };
 
 const render = () => {
@@ -424,6 +446,52 @@ const render = () => {
     if (timer.status === 'running') {
         tickId = setInterval(renderClock, 250);
     }
+};
+
+// --- export ---
+
+const CSV_COLUMNS = ['date', 'start', 'end', 'phase', 'label', 'planned_min', 'actual_min', 'completed'];
+
+const csvCell = (value) => {
+    const text = String(value ?? '');
+    return /[",;\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+};
+
+const toCsv = () => {
+    const rows = history.map((entry) => [
+        dateKey(entry.endedAt),
+        formatTime(entry.startedAt),
+        formatTime(entry.endedAt),
+        entry.phase,
+        entry.label || '',
+        minutesOf(entry.plannedMs),
+        minutesOf(entry.actualMs),
+        entry.completed ? 1 : 0,
+    ]);
+
+    const lines = [CSV_COLUMNS, ...rows].map((row) => row.map(csvCell).join(','));
+    // BOM so that Excel opens the Cyrillic labels in UTF-8
+    return `\ufeff${lines.join('\r\n')}`;
+};
+
+const toJson = () => JSON.stringify({
+    exportedAt: new Date().toISOString(),
+    settings,
+    daily,
+    history,
+}, null, 2);
+
+const download = (content, type, extension) => {
+    const url = URL.createObjectURL(new Blob([content], { type }));
+    const link = document.createElement('a');
+
+    link.href = url;
+    link.download = `pomodoro-${dateKey()}.${extension}`;
+    shadow.append(link);
+    link.click();
+    link.remove();
+
+    URL.revokeObjectURL(url);
 };
 
 // --- widget visibility ---
@@ -518,6 +586,14 @@ el.toggleWeek.addEventListener('click', () => {
 el.toggleHistory.addEventListener('click', () => {
     historyOpen = !historyOpen;
     renderHistory();
+});
+
+el.exportCsv.addEventListener('click', () => {
+    download(toCsv(), 'text/csv;charset=utf-8', 'csv');
+});
+
+el.exportJson.addEventListener('click', () => {
+    download(toJson(), 'application/json', 'json');
 });
 
 el.clearHistory.addEventListener('click', () => {
