@@ -15,9 +15,9 @@ const DEFAULT_TIMER = {
     startedAt: null,        // timestamp of the first start of the current phase
     plannedMs: null,        // full length of the current phase, frozen at its first start
     completedSessions: 0,   // work sessions since the last long break
-    sessionsToday: 0,
-    day: null,              // 'YYYY-MM-DD', used to reset sessionsToday on a new day
 };
+
+const EMPTY_DAY = { focusMs: 0, breakMs: 0, sessions: 0, interrupted: 0 };
 
 const PHASE_LABEL = {
     work: 'работа',
@@ -31,11 +31,25 @@ const PHASE_SETTING = {
     longBreak: 'longMinutes',
 };
 
-// Interrupted phases shorter than this are not worth a history entry.
+// Interrupted phases shorter than this are not worth recording.
 const MIN_RECORD_MS = 30_000;
-const HISTORY_LIMIT = 500;
 
-const today = () => new Date().toISOString().slice(0, 10);
+// The log is a recent-activity feed, so it is bounded by time, not by count:
+// every number the UI shows comes from the daily totals, which are never dropped.
+// The count is only a safety net against a flood of one-minute sessions
+// (~130 bytes per entry, so 2000 entries is ~260 KB against a 10 MB quota).
+const HISTORY_DAYS = 30;
+const HISTORY_MAX_ENTRIES = 2000;
+
+// Local calendar date as 'YYYY-MM-DD'. Built by hand rather than via a locale:
+// toISOString() would give the UTC date and push late-evening sessions into the
+// next day, while a locale format is not guaranteed to be sortable.
+const dateKey = (ts = Date.now()) => {
+    const date = new Date(ts);
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${date.getFullYear()}-${month}-${day}`;
+};
 
 const getSettings = async () => {
     const { settings } = await chrome.storage.local.get('settings');
@@ -60,14 +74,44 @@ const remainingMs = (timer) => {
     return 0;
 };
 
-// --- history ---
+// --- history log + daily totals ---
 
-const addHistoryEntry = async (entry) => {
-    const { history = [] } = await chrome.storage.local.get('history');
-    await chrome.storage.local.set({ history: [entry, ...history].slice(0, HISTORY_LIMIT) });
+// Fold one finished phase into a day's totals.
+const applyToDay = (day, entry) => {
+    const next = { ...EMPTY_DAY, ...day };
+
+    if (entry.phase !== 'work') {
+        next.breakMs += entry.actualMs;
+        return next;
+    }
+
+    next.focusMs += entry.actualMs;
+    if (entry.completed) {
+        next.sessions += 1;
+    } else {
+        next.interrupted += 1;
+    }
+    return next;
 };
 
-// Write a history entry for the phase that is about to end.
+const pruneHistory = (history) => {
+    const cutoff = Date.now() - HISTORY_DAYS * 24 * 60 * 60 * 1000;
+    return history
+        .filter((entry) => entry.endedAt >= cutoff)
+        .slice(0, HISTORY_MAX_ENTRIES);
+};
+
+const saveEntry = async (entry) => {
+    const { history = [], daily = {} } = await chrome.storage.local.get(['history', 'daily']);
+    const key = dateKey(entry.endedAt);
+
+    await chrome.storage.local.set({
+        history: pruneHistory([entry, ...history]),
+        daily: { ...daily, [key]: applyToDay(daily[key], entry) },
+    });
+};
+
+// Write down the phase that is about to end.
 const recordPhase = async (timer, completed) => {
     if (!timer.startedAt || !timer.plannedMs) return;   // phase was never started
 
@@ -77,7 +121,7 @@ const recordPhase = async (timer, completed) => {
 
     if (!completed && actualMs < MIN_RECORD_MS) return;
 
-    await addHistoryEntry({
+    await saveEntry({
         phase: timer.phase,
         startedAt: timer.startedAt,
         endedAt: Date.now(),
@@ -85,6 +129,19 @@ const recordPhase = async (timer, completed) => {
         actualMs,
         completed,
     });
+};
+
+// One-off: build daily totals for users who already have a history log.
+const backfillDaily = async () => {
+    const { history = [], daily } = await chrome.storage.local.get(['history', 'daily']);
+    if (daily || history.length === 0) return;
+
+    const totals = {};
+    for (const entry of history) {
+        const key = dateKey(entry.endedAt);
+        totals[key] = applyToDay(totals[key], entry);
+    }
+    await chrome.storage.local.set({ daily: totals });
 };
 
 // --- commands ---
@@ -167,19 +224,12 @@ const advance = async ({ completed, notify }) => {
 
     await recordPhase(timer, completed);
 
-    const day = today();
-    const base = timer.day === day ? timer.sessionsToday : 0;
-    const countsAsSession = finished === 'work' && completed;
-    const sessionsToday = countsAsSession ? base + 1 : base;
-
     const { phase, completedSessions } = nextPhase(timer, settings, completed);
 
     await saveTimer({
         ...timer,
         phase,
         completedSessions,
-        sessionsToday,
-        day,
         status: 'idle',
         endsAt: null,
         remainingMs: null,
@@ -218,7 +268,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.runtime.onStartup.addListener(reconcile);
-chrome.runtime.onInstalled.addListener(reconcile);
+
+chrome.runtime.onInstalled.addListener(async () => {
+    await backfillDaily();
+    await reconcile();
+});
 
 chrome.runtime.onMessage.addListener((request) => {
     switch (request.action) {
@@ -227,6 +281,7 @@ chrome.runtime.onMessage.addListener((request) => {
         case 'reset': reset(); break;
         case 'skip': advance({ completed: false, notify: false }); break;
         case 'clear-history': chrome.storage.local.set({ history: [] }); break;
+        case 'clear-stats': chrome.storage.local.set({ history: [], daily: {} }); break;
     }
 });
 

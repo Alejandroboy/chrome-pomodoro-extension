@@ -13,9 +13,9 @@ const DEFAULT_TIMER = {
     startedAt: null,
     plannedMs: null,
     completedSessions: 0,
-    sessionsToday: 0,
-    day: null,
 };
+
+const EMPTY_DAY = { focusMs: 0, breakMs: 0, sessions: 0, interrupted: 0 };
 
 const PHASE_LABEL = {
     work: 'Работа',
@@ -79,6 +79,7 @@ shadow.innerHTML = `
         <div class="panel-head">
             <h3>Неделя</h3>
             <span id="weekTotal" class="panel-note">0 мин</span>
+            <button id="clearStats" class="btn btn-quiet" title="Стереть журнал и всю статистику">Сбросить</button>
         </div>
         <div class="week-bars" id="weekBars"></div>
     </div>
@@ -86,7 +87,7 @@ shadow.innerHTML = `
     <div class="history" id="history">
         <div class="panel-head">
             <h3>История</h3>
-            <button id="clearHistory" class="btn btn-quiet">Очистить</button>
+            <button id="clearHistory" class="btn btn-quiet" title="Очистить журнал, статистика останется">Очистить журнал</button>
         </div>
         <ul class="history-list" id="historyList"></ul>
     </div>
@@ -136,6 +137,7 @@ const el = {
     week: shadow.querySelector('#week'),
     weekBars: shadow.querySelector('#weekBars'),
     weekTotal: shadow.querySelector('#weekTotal'),
+    clearStats: shadow.querySelector('#clearStats'),
     toggleHistory: shadow.querySelector('#toggleHistory'),
     clearHistory: shadow.querySelector('#clearHistory'),
     history: shadow.querySelector('#history'),
@@ -153,6 +155,7 @@ const inputs = {
 let settings = { ...DEFAULT_SETTINGS };
 let timer = { ...DEFAULT_TIMER };
 let history = [];
+let daily = {};
 let historyOpen = false;
 let weekOpen = false;
 let tickId = null;
@@ -183,7 +186,15 @@ const formatTime = (ts) => new Date(ts).toLocaleTimeString('ru-RU', {
 
 const minutesOf = (ms) => Math.round(ms / 60_000);
 
-const isSameDay = (ts, date) => new Date(ts).toDateString() === date.toDateString();
+// Local calendar date as 'YYYY-MM-DD' - must match the key the worker writes.
+const dateKey = (ts = Date.now()) => {
+    const date = new Date(ts);
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${date.getFullYear()}-${month}-${day}`;
+};
+
+const dayTotals = (key) => ({ ...EMPTY_DAY, ...(daily[key] || {}) });
 
 // --- rendering ---
 
@@ -234,33 +245,24 @@ const WEEKDAYS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
 const WEEK_DAYS_SHOWN = 7;
 const BAR_MIN_PERCENT = 3;   // so that an empty day still shows a baseline
 
-const dayKey = (date) => date.toDateString();
-
 // Focused minutes per day for the last 7 days, oldest first.
 const weekStats = () => {
-    const totals = new Map();
-    for (const entry of history) {
-        if (entry.phase !== 'work') continue;
-        const key = dayKey(new Date(entry.endedAt));
-        const day = totals.get(key) || { ms: 0, sessions: 0 };
-        day.ms += entry.actualMs;
-        day.sessions += entry.completed ? 1 : 0;
-        totals.set(key, day);
-    }
-
     const days = [];
+
     for (let offset = WEEK_DAYS_SHOWN - 1; offset >= 0; offset -= 1) {
         const date = new Date();
         date.setHours(0, 0, 0, 0);
         date.setDate(date.getDate() - offset);
-        const day = totals.get(dayKey(date)) || { ms: 0, sessions: 0 };
+
+        const day = dayTotals(dateKey(date));
         days.push({
             label: WEEKDAYS[date.getDay()],
             isToday: offset === 0,
-            minutes: minutesOf(day.ms),
+            minutes: minutesOf(day.focusMs),
             sessions: day.sessions,
         });
     }
+
     return days;
 };
 
@@ -304,13 +306,10 @@ const renderWeek = () => {
 };
 
 const renderStats = () => {
-    const now = new Date();
-    const focusedMs = history
-        .filter((entry) => entry.phase === 'work' && isSameDay(entry.endedAt, now))
-        .reduce((sum, entry) => sum + entry.actualMs, 0);
+    const today = dayTotals(dateKey());
 
-    el.focusToday.textContent = `${minutesOf(focusedMs)} мин`;
-    el.sessionsToday.textContent = String(timer.sessionsToday);
+    el.focusToday.textContent = `${minutesOf(today.focusMs)} мин`;
+    el.sessionsToday.textContent = String(today.sessions);
     el.sessionsInBlock.textContent = `${timer.completedSessions} / ${settings.sessionsPerBlock}`;
 };
 
@@ -407,13 +406,18 @@ el.clearHistory.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'clear-history' });
 });
 
+el.clearStats.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ action: 'clear-stats' });
+});
+
 // --- storage sync ---
 
 chrome.storage.local.onChanged.addListener((changes) => {
     if (changes.settings) settings = { ...DEFAULT_SETTINGS, ...changes.settings.newValue };
     if (changes.timer) timer = { ...DEFAULT_TIMER, ...changes.timer.newValue };
     if (changes.history) history = changes.history.newValue || [];
-    if (changes.settings || changes.timer || changes.history) render();
+    if (changes.daily) daily = changes.daily.newValue || {};
+    if (changes.settings || changes.timer || changes.history || changes.daily) render();
 });
 
 chrome.runtime.onMessage.addListener((message) => {
@@ -421,9 +425,10 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 (async () => {
-    const stored = await chrome.storage.local.get(['settings', 'timer', 'history']);
+    const stored = await chrome.storage.local.get(['settings', 'timer', 'history', 'daily']);
     settings = { ...DEFAULT_SETTINGS, ...(stored.settings || {}) };
     timer = { ...DEFAULT_TIMER, ...(stored.timer || {}) };
     history = stored.history || [];
+    daily = stored.daily || {};
     render();
 })();
