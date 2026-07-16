@@ -58,6 +58,22 @@
     align-items: center;
     justify-content: space-between;
     margin-bottom: 14px;
+    cursor: grab;
+    user-select: none;
+    touch-action: none;   /* let pointer events own touch drags, not the page scroll */
+}
+
+.widget.dragging .head {
+    cursor: grabbing;
+}
+
+/* No selecting or transitions mid-drag - both fight the pointer. */
+.widget.dragging {
+    user-select: none;
+}
+
+.head #close {
+    cursor: pointer;
 }
 
 .head h2 {

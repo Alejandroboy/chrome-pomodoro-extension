@@ -53,7 +53,7 @@ const shadow = host.attachShadow({ mode: 'open' });
 shadow.innerHTML = `
 <link rel="stylesheet" href="${chrome.runtime.getURL('styles.css')}">
 <div class="widget">
-    <div class="head">
+    <div class="head" id="head">
         <h2>Pomodoro</h2>
         <button id="close" title="Закрыть">×</button>
     </div>
@@ -167,6 +167,7 @@ shadow.innerHTML = `
 
 const el = {
     widget: shadow.querySelector('.widget'),
+    head: shadow.querySelector('#head'),
     phase: shadow.querySelector('#phase'),
     timer: shadow.querySelector('#timer'),
     start: shadow.querySelector('#start'),
@@ -224,6 +225,7 @@ let historyOpen = false;
 let weekOpen = false;
 let tickId = null;
 let elapsedPingedFor = null;   // endsAt we already reported, so tabs ping once each
+let position = null;           // { left, top }, or null while it sits at the default corner   // endsAt we already reported, so tabs ping once each
 
 const phaseDurationMs = (phase) => {
     const minutes = Number(settings[PHASE_SETTING[phase]]);
@@ -533,6 +535,64 @@ const download = (content, type, extension) => {
     URL.revokeObjectURL(url);
 };
 
+// --- dragging ---
+
+const MARGIN = 8;   // keep at least this much of the widget on screen
+
+// Keep the widget within the viewport so it can never be dragged out of reach.
+const clampPosition = (left, top) => {
+    const rect = el.widget.getBoundingClientRect();
+    const maxLeft = window.innerWidth - rect.width - MARGIN;
+    const maxTop = window.innerHeight - rect.height - MARGIN;
+    return {
+        left: Math.max(MARGIN, Math.min(left, Math.max(MARGIN, maxLeft))),
+        top: Math.max(MARGIN, Math.min(top, Math.max(MARGIN, maxTop))),
+    };
+};
+
+const applyPosition = () => {
+    if (!position) return;   // no saved spot yet - the stylesheet's corner wins
+    el.widget.style.left = `${position.left}px`;
+    el.widget.style.top = `${position.top}px`;
+};
+
+let drag = null;
+
+const onPointerDown = (event) => {
+    // left button / touch only, and never when grabbing the close button
+    if (event.button !== 0 || event.target.closest('#close')) return;
+
+    const rect = el.widget.getBoundingClientRect();
+    drag = { dx: event.clientX - rect.left, dy: event.clientY - rect.top };
+    el.head.setPointerCapture(event.pointerId);
+    el.widget.classList.add('dragging');
+};
+
+const onPointerMove = (event) => {
+    if (!drag) return;
+    position = clampPosition(event.clientX - drag.dx, event.clientY - drag.dy);
+    applyPosition();
+};
+
+const onPointerUp = (event) => {
+    if (!drag) return;
+    drag = null;
+    el.head.releasePointerCapture(event.pointerId);
+    el.widget.classList.remove('dragging');
+    chrome.storage.local.set({ ui: position });
+};
+
+el.head.addEventListener('pointerdown', onPointerDown);
+el.head.addEventListener('pointermove', onPointerMove);
+el.head.addEventListener('pointerup', onPointerUp);
+
+// A window resize can leave the widget partly off-screen - pull it back.
+window.addEventListener('resize', () => {
+    if (!position) return;
+    position = clampPosition(position.left, position.top);
+    applyPosition();
+});
+
 // --- widget visibility ---
 
 const isVisible = () => host.style.display !== 'none';
@@ -655,6 +715,10 @@ chrome.storage.local.onChanged.addListener((changes) => {
     if (changes.timer) timer = { ...DEFAULT_TIMER, ...changes.timer.newValue };
     if (changes.history) history = changes.history.newValue || [];
     if (changes.daily) daily = changes.daily.newValue || {};
+    if (changes.ui) {
+        position = changes.ui.newValue || null;
+        applyPosition();
+    }
     if (changes.settings || changes.timer || changes.history || changes.daily) render();
 });
 
@@ -667,10 +731,12 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 (async () => {
-    const stored = await chrome.storage.local.get(['settings', 'timer', 'history', 'daily']);
+    const stored = await chrome.storage.local.get(['settings', 'timer', 'history', 'daily', 'ui']);
     settings = { ...DEFAULT_SETTINGS, ...(stored.settings || {}) };
     timer = { ...DEFAULT_TIMER, ...(stored.timer || {}) };
     history = stored.history || [];
     daily = stored.daily || {};
+    position = stored.ui || null;
+    applyPosition();
     render();
 })();
