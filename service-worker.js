@@ -11,6 +11,7 @@ const DEFAULT_SETTINGS = {
     longMinutes: 15,
     sessionsPerBlock: 4,
     dailyGoal: 8,
+    sound: true,
     autoStartBreaks: true,
     autoStartWork: false,
 };
@@ -70,6 +71,16 @@ const dateKey = (ts = Date.now()) => {
     return `${date.getFullYear()}-${month}-${day}`;
 };
 
+// Every command that mutates the timer goes through this queue. Without it,
+// a phase-end ping from several open tabs would advance the phase several times.
+let queue = Promise.resolve();
+
+const serialize = (task) => {
+    const run = queue.then(task, task);
+    queue = run.catch(() => {});
+    return run;
+};
+
 const getSettings = async () => {
     const { settings } = await chrome.storage.local.get('settings');
     return { ...DEFAULT_SETTINGS, ...(settings || {}) };
@@ -94,6 +105,51 @@ const remainingMs = (timer) => {
     if (timer.status === 'running') return Math.max(0, timer.endsAt - Date.now());
     if (timer.status === 'paused') return Math.max(0, timer.remainingMs || 0);
     return 0;
+};
+
+// --- sound ---
+
+const OFFSCREEN_PATH = 'offscreen.html';
+
+let offscreenReady = null;
+
+// createDocument() throws if one already exists, so concurrent calls share a promise.
+const ensureOffscreen = () => {
+    if (offscreenReady) return offscreenReady;
+
+    offscreenReady = (async () => {
+        const contexts = await chrome.runtime.getContexts({
+            contextTypes: ['OFFSCREEN_DOCUMENT'],
+        });
+
+        if (contexts.length === 0) {
+            await chrome.offscreen.createDocument({
+                url: OFFSCREEN_PATH,
+                reasons: ['AUDIO_PLAYBACK'],
+                justification: 'Звуковой сигнал в конце фазы помидора',
+            });
+        }
+    })().finally(() => {
+        offscreenReady = null;
+    });
+
+    return offscreenReady;
+};
+
+// The service worker has no DOM, so the chime is played by an offscreen document.
+const playSound = async (finished, settings) => {
+    if (!settings.sound) return;
+
+    try {
+        await ensureOffscreen();
+        await chrome.runtime.sendMessage({
+            target: 'offscreen',
+            action: 'play-sound',
+            phase: finished,
+        });
+    } catch {
+        // no sound is not worth breaking the phase transition over
+    }
 };
 
 // --- badge ---
@@ -341,7 +397,10 @@ const advance = async ({ completed, notify }) => {
         plannedMs: null,
     });
 
-    if (notify) notifyPhaseEnd(finished, phase, autoStart);
+    if (notify) {
+        notifyPhaseEnd(finished, phase, autoStart);
+        playSound(finished, settings);
+    }
     if (autoStart) await start();
 };
 
@@ -385,7 +444,7 @@ const reconcile = async () => {
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
     if (alarm.name === ALARM) {
-        reconcile();
+        serialize(reconcile);
         return;
     }
     if (alarm.name === BADGE_ALARM) {
@@ -393,21 +452,26 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     }
 });
 
-chrome.runtime.onStartup.addListener(reconcile);
+chrome.runtime.onStartup.addListener(() => serialize(reconcile));
 
-chrome.runtime.onInstalled.addListener(async () => {
+chrome.runtime.onInstalled.addListener(() => serialize(async () => {
     await dropLegacyKeys();
     await backfillDaily();
     await reconcile();
-});
+}));
 
 chrome.runtime.onMessage.addListener((request) => {
     switch (request.action) {
-        case 'start': start(); break;
-        case 'pause': pause(); break;
-        case 'reset': reset(); break;
-        case 'skip': advance({ completed: false, notify: false }); break;
-        case 'set-label': setLabel(request.label); break;
+        case 'start': serialize(start); break;
+        case 'pause': serialize(pause); break;
+        case 'reset': serialize(reset); break;
+        case 'skip': serialize(() => advance({ completed: false, notify: false })); break;
+        case 'set-label': serialize(() => setLabel(request.label)); break;
+
+        // the widget saw the countdown hit zero: finish the phase now instead of
+        // waiting for the alarm, which Chrome may fire up to 30 seconds late
+        case 'phase-elapsed': serialize(reconcile); break;
+
         case 'clear-history': chrome.storage.local.set({ history: [] }); break;
         case 'clear-stats': chrome.storage.local.set({ history: [], daily: {} }); break;
     }

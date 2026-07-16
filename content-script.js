@@ -4,6 +4,7 @@ const DEFAULT_SETTINGS = {
     longMinutes: 15,
     sessionsPerBlock: 4,
     dailyGoal: 8,
+    sound: true,
     autoStartBreaks: true,
     autoStartWork: false,
     theme: 'auto',   // auto | light | dark
@@ -144,6 +145,10 @@ shadow.innerHTML = `
                 <option value="dark">Тёмная</option>
             </select>
         </label>
+        <label for="sound">
+            <span>Звук в конце фазы</span>
+            <input type="checkbox" id="sound">
+        </label>
         <label for="autoStartBreaks">
             <span>Начинать перерыв автоматически</span>
             <input type="checkbox" id="autoStartBreaks">
@@ -194,7 +199,7 @@ const el = {
 };
 
 const NUMBER_KEYS = ['workMinutes', 'shortMinutes', 'longMinutes', 'sessionsPerBlock', 'dailyGoal'];
-const FLAG_KEYS = ['autoStartBreaks', 'autoStartWork'];
+const FLAG_KEYS = ['sound', 'autoStartBreaks', 'autoStartWork'];
 const CHOICE_KEYS = ['theme'];
 
 const inputs = {
@@ -203,6 +208,7 @@ const inputs = {
     longMinutes: shadow.querySelector('#longMinutes'),
     sessionsPerBlock: shadow.querySelector('#sessionsPerBlock'),
     dailyGoal: shadow.querySelector('#dailyGoal'),
+    sound: shadow.querySelector('#sound'),
     autoStartBreaks: shadow.querySelector('#autoStartBreaks'),
     autoStartWork: shadow.querySelector('#autoStartWork'),
     theme: shadow.querySelector('#theme'),
@@ -217,6 +223,7 @@ let daily = {};
 let historyOpen = false;
 let weekOpen = false;
 let tickId = null;
+let elapsedPingedFor = null;   // endsAt we already reported, so tabs ping once each
 
 const phaseDurationMs = (phase) => {
     const minutes = Number(settings[PHASE_SETTING[phase]]);
@@ -267,7 +274,15 @@ const renderTheme = () => {
 // --- rendering ---
 
 const renderClock = () => {
-    el.timer.textContent = formatClock(remainingMs());
+    const left = remainingMs();
+    el.timer.textContent = formatClock(left);
+
+    // The alarm may fire up to 30 seconds late (Chrome clamps them), and the widget
+    // already knows the phase is over - tell the worker instead of waiting.
+    if (timer.status === 'running' && left <= 0 && elapsedPingedFor !== timer.endsAt) {
+        elapsedPingedFor = timer.endsAt;
+        chrome.runtime.sendMessage({ action: 'phase-elapsed' });
+    }
 };
 
 const renderHistory = () => {
