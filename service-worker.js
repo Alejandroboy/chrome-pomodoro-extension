@@ -286,6 +286,7 @@ const start = async () => {
         status: 'running',
         endsAt,
         remainingMs: null,
+        idleAuto: false,
         startedAt: isResume ? timer.startedAt : Date.now(),
         plannedMs: isResume ? timer.plannedMs : duration,
     });
@@ -293,7 +294,7 @@ const start = async () => {
     chrome.alarms.create(ALARM, { when: endsAt });
 };
 
-const pause = async () => {
+const pause = async (idleAuto = false) => {
     const timer = await getTimer();
     if (timer.status !== 'running') return;
 
@@ -303,6 +304,7 @@ const pause = async () => {
         status: 'paused',
         remainingMs: remainingMs(timer),
         endsAt: null,
+        idleAuto,
     });
 };
 
@@ -440,6 +442,28 @@ const reconcile = async () => {
     }
 };
 
+// --- idle ---
+
+// chrome.idle threshold is global and in seconds; 15 is its documented minimum.
+const applyIdleInterval = async () => {
+    const settings = await getSettings();
+    const seconds = Math.max(15, Math.round((Number(settings.idleMinutes) || 5) * 60));
+    chrome.idle.setDetectionInterval(seconds);
+};
+
+const onIdleStateChanged = (state) => serialize(async () => {
+    const settings = await getSettings();
+    if (!settings.idlePause || state === 'active') return;
+
+    const timer = await getTimer();
+    // only work is worth pausing - a break is meant to be spent away from the desk
+    if (timer.status !== 'running' || timer.phase !== 'work') return;
+
+    await pause(true);
+});
+
+chrome.idle.onStateChanged.addListener(onIdleStateChanged);
+
 // --- events ---
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
@@ -452,13 +476,23 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     }
 });
 
-chrome.runtime.onStartup.addListener(() => serialize(reconcile));
+chrome.storage.local.onChanged.addListener((changes) => {
+    if (changes.settings) applyIdleInterval();
+});
 
-chrome.runtime.onInstalled.addListener(() => serialize(async () => {
-    await dropLegacyKeys();
-    await backfillDaily();
-    await reconcile();
-}));
+chrome.runtime.onStartup.addListener(() => {
+    applyIdleInterval();
+    serialize(reconcile);
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+    applyIdleInterval();
+    serialize(async () => {
+        await dropLegacyKeys();
+        await backfillDaily();
+        await reconcile();
+    });
+});
 
 chrome.runtime.onMessage.addListener((request) => {
     switch (request.action) {

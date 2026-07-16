@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Pomodoro Alejandro",
-  "version": "2.1.0",
-  "version_name": "2.1.0",
+  "version": "2.2.0",
+  "version_name": "2.2.0",
   "minimum_chrome_version": "120",
-  "description": "2.1.0 — звук и мгновенный переход фазы\nПомидорный таймер: фазы, метки сессий, дневная цель, статистика и экспорт",
+  "description": "2.2.0 — перетаскивание и автопауза\nПомидорный таймер: фазы, метки сессий, дневная цель, статистика и экспорт",
   "action": {},
   "background": {
     "service_worker": "service-worker.js",
@@ -34,7 +34,8 @@
     "notifications",
     "storage",
     "alarms",
-    "offscreen"
+    "offscreen",
+    "idle"
   ],
   "icons": {
     "48": "images/icon-128.png",

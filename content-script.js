@@ -7,6 +7,8 @@ const DEFAULT_SETTINGS = {
     sound: true,
     autoStartBreaks: true,
     autoStartWork: false,
+    idlePause: true,
+    idleMinutes: 5,
     theme: 'auto',   // auto | light | dark
 };
 
@@ -15,6 +17,7 @@ const DEFAULT_TIMER = {
     status: 'idle',
     endsAt: null,
     remainingMs: null,
+    idleAuto: false,
     startedAt: null,
     plannedMs: null,
     completedSessions: 0,
@@ -149,6 +152,14 @@ shadow.innerHTML = `
             <span>Звук в конце фазы</span>
             <input type="checkbox" id="sound">
         </label>
+        <label for="idlePause">
+            <span>Пауза, когда отхожу</span>
+            <input type="checkbox" id="idlePause">
+        </label>
+        <label for="idleMinutes">
+            <span>Считать «отошёл» через, мин</span>
+            <input type="number" min="1" id="idleMinutes">
+        </label>
         <label for="autoStartBreaks">
             <span>Начинать перерыв автоматически</span>
             <input type="checkbox" id="autoStartBreaks">
@@ -199,8 +210,8 @@ const el = {
     historyList: shadow.querySelector('#historyList'),
 };
 
-const NUMBER_KEYS = ['workMinutes', 'shortMinutes', 'longMinutes', 'sessionsPerBlock', 'dailyGoal'];
-const FLAG_KEYS = ['sound', 'autoStartBreaks', 'autoStartWork'];
+const NUMBER_KEYS = ['workMinutes', 'shortMinutes', 'longMinutes', 'sessionsPerBlock', 'dailyGoal', 'idleMinutes'];
+const FLAG_KEYS = ['sound', 'autoStartBreaks', 'autoStartWork', 'idlePause'];
 const CHOICE_KEYS = ['theme'];
 
 const inputs = {
@@ -210,6 +221,8 @@ const inputs = {
     sessionsPerBlock: shadow.querySelector('#sessionsPerBlock'),
     dailyGoal: shadow.querySelector('#dailyGoal'),
     sound: shadow.querySelector('#sound'),
+    idlePause: shadow.querySelector('#idlePause'),
+    idleMinutes: shadow.querySelector('#idleMinutes'),
     autoStartBreaks: shadow.querySelector('#autoStartBreaks'),
     autoStartWork: shadow.querySelector('#autoStartWork'),
     theme: shadow.querySelector('#theme'),
@@ -474,7 +487,9 @@ const renderStats = () => {
 const render = () => {
     renderTheme();
     renderClock();
-    el.phase.textContent = PHASE_LABEL[timer.phase];
+
+    const idlePaused = timer.status === 'paused' && timer.idleAuto;
+    el.phase.textContent = idlePaused ? 'Пауза — вас не было' : PHASE_LABEL[timer.phase];
     el.phase.dataset.phase = timer.phase;
     el.start.textContent = START_LABEL[timer.status];
     renderLabel();
